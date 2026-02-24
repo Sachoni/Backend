@@ -1,91 +1,108 @@
+// /api/index.js
 const express = require("express");
 const cors = require("cors");
-
-const products = require("./data/products");
-const users = require("./data/users");
+const { Pool } = require("pg");
 
 const app = express();
-const PORT = 5000;
-
-// middleware
 app.use(cors());
 app.use(express.json());
 
-// health check
-app.get("/", (req, res) => {
-  res.send("Butter backend running 🚀");
+// PostgreSQL connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
+// ================= HEALTH CHECK =================
+app.get("/", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT NOW()");
+    res.json({
+      message: "Butter backend running 🚀",
+      server_time: result.rows[0],
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ================= PRODUCTS =================
 
 // get all products
-app.get("/api/products", (req, res) => {
+app.get("/api/products", async (req, res) => {
   const { category } = req.query;
 
-  if (category) {
-    const filtered = products.filter(
-      p => p.category === category
-    );
-    return res.json(filtered);
-  }
+  try {
+    let query = "SELECT * FROM products";
+    const params = [];
 
-  res.json(products);
+    if (category) {
+      query += " WHERE category = $1";
+      params.push(category);
+    }
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // get single product
-app.get("/api/products/:id", (req, res) => {
-  const product = products.find(
-    p => p.id === Number(req.params.id)
-  );
+app.get("/api/products/:id", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM products WHERE id = $1",
+      [req.params.id]
+    );
 
-  if (!product) {
-    return res.status(404).json({ message: "Product not found!!" });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Product not found!!" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-
-  res.json(product);
 });
-
 
 // ================= AUTH =================
 
-app.post("/api/login", (req, res) => {
+// login route
+app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
 
-  const user = users.find(
-    u => u.email === email && u.password === password
-  );
+  try {
+    const result = await pool.query(
+      "SELECT id, name, email FROM users WHERE email = $1 AND password = $2",
+      [email, password]
+    );
 
-  if (!user) {
-    return res.status(401).json({
-      success: false,
-      message: "Invalid credentials"
-    });
-  }
-
-  res.json({
-    success: true,
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
-  });
+
+    res.json({
+      success: true,
+      user: result.rows[0],
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-
 // ================= NOTIFICATIONS =================
-
 app.get("/api/notifications", (req, res) => {
   res.json([
     { id: 1, text: "Your order has shipped" },
-    { id: 2, text: "New hoodie collection available" }
+    { id: 2, text: "New hoodie collection available" },
   ]);
 });
 
-
-// ================= SERVER =================
-
-app.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
-});
+// ================= EXPORT =================
+module.exports = app;
